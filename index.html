@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quantum Error Correction Dashboard</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.1/socket.io.js"></script>
+
+<style>
+/* --- BASE STYLES --- */
+body { font-family: 'Inter', sans-serif; margin: 0; background: linear-gradient(135deg, #0b1020, #111a3a); color: #e9eeff; transition: 0.4s; }
+body.light { background: #eef2ff; color: #111; }
+
+h1 { text-align: center; margin: 30px 0 10px; font-size: 34px; font-weight: 900; background: linear-gradient(90deg, #7c3aed, #22d3ee); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+h3 { margin-top: 0; color: #fff; }
+body.light h3 { color: #111; }
+
+/* --- GRID LAYOUT --- */
+.container { display: grid; grid-template-columns: 320px 1fr; gap: 30px; padding: 40px; max-width: 1300px; margin: auto; align-items: start; }
+.controls-panel { position: sticky; top: 40px; }
+.main-content { display: flex; flex-direction: column; gap: 30px; }
+
+/* --- CARDS --- */
+.card { padding: 25px; border-radius: 20px; background: rgba(20, 25, 55, 0.7); backdrop-filter: blur(14px); border: 1px solid rgba(255, 255, 255, 0.08); box-shadow: 0 10px 40px rgba(0,0,0,0.4); }
+body.light .card { background: white; border: 1px solid rgba(0,0,0,0.08); box-shadow: 0 10px 40px rgba(0,0,0,0.05); }
+
+/* --- FORMS & INPUTS --- */
+.card label { display: block; margin-top: 16px; margin-bottom: 6px; font-size: 13px; font-weight: 600; color: #a5b4fc; text-align: left; }
+.card input, .card select, #loginOverlay input { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(0, 0, 0, 0.25); color: white; font-family: inherit; font-size: 14px; box-sizing: border-box; transition: all 0.2s ease; }
+.card input:focus, .card select:focus, #loginOverlay input:focus { outline: none; border-color: #22d3ee; box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.2); }
+body.light .card input, body.light .card select, body.light #loginOverlay input { background: #f8fafc; color: #111; border: 1px solid #cbd5e1; }
+
+/* --- BUTTONS --- */
+.btn-group { display: flex; gap: 12px; margin-top: 20px; }
+button { flex: 1; padding: 12px; border: none; border-radius: 12px; background: linear-gradient(135deg, #7c3aed, #4f46e5); color: white; cursor: pointer; font-weight: 600; transition: 0.2s; }
+button:hover { opacity: 0.9; transform: translateY(-1px); }
+
+/* --- PROGRESS BAR --- */
+.progress { height: 8px; margin-top: 20px; border-radius: 10px; background: rgba(0,0,0,0.3); overflow: hidden; }
+.progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #7c3aed, #22d3ee); transition: width 0.3s; }
+
+/* --- KPIs --- */
+.kpi { flex: 1; padding: 16px; border-radius: 16px; text-align: center; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); }
+.kpi div:first-child { font-size: 12px; color: #a5b4fc; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+.kpi div:last-child { font-size: 20px; font-weight: 800; }
+body.light .kpi { background: #f8fafc; border: 1px solid #e2e8f0; }
+
+/* --- CHARTS --- */
+.chart { width: 100%; max-width: 800px; margin: 20px auto; display: block; border-radius: 12px; clip-path: inset(0 100% 0 0); transition: clip-path 1.5s ease-out; }
+.chart.animate { clip-path: inset(0 0% 0 0); }
+.skeleton { width: 100%; height: 200px; border-radius: 12px; background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.05) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; margin-top: 12px; }
+body.light .skeleton { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); }
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* --- QUBIT SIMULATION --- */
+#qubitGrid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 10px; margin-top: 15px; justify-content: center; }
+.qubit-box { text-align: center; font-size: 11px; color: #94a3b8; }
+.qubit { width: 28px; height: 28px; border-radius: 50%; background: #22c55e; margin: 0 auto 5px; transition: 0.4s; }
+.qubit.error { background: #ef4444; box-shadow: 0 0 10px #ef4444; }
+.qubit.fixed { box-shadow: 0 0 15px #22d3ee, 0 0 25px #22d3ee; transform: scale(1.2); }
+#errorCount { margin-top: 15px; font-weight: bold; text-align: center; color: #fff; }
+body.light #errorCount { color: #111; }
+
+/* --- THEME SWITCH --- */
+.switch { position: fixed; top: 20px; right: 20px; width: 50px; height: 26px; z-index: 1000;}
+.switch input { display: none; }
+.slider { position: absolute; background: #7c3aed; border-radius: 34px; width: 100%; height: 100%; cursor: pointer; }
+.slider:before { content: ""; position: absolute; height: 20px; width: 20px; left: 3px; top: 3px; background: white; border-radius: 50%; transition: 0.3s; }
+input:checked + .slider { background: #22d3ee; }
+input:checked + .slider:before { transform: translateX(24px); }
+
+/* --- LOGIN OVERLAY --- */
+#loginOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(11, 16, 32, 0.95); backdrop-filter: blur(10px); display: flex; justify-content: center; align-items: center; z-index: 9999; }
+.login-box { background: #141937; padding: 40px; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.1); width: 300px; text-align: center; }
+body.light #loginOverlay { background: rgba(238, 242, 255, 0.95); }
+body.light .login-box { background: white; border: 1px solid #ddd; }
+#loginError { color: #ef4444; margin-top: 15px; font-size: 14px; display: none; }
+.logout-btn { position: fixed; top: 20px; left: 20px; padding: 8px 16px; width: auto; z-index: 1000; }
+</style>
+</head>
+
+<body>
+<script> const isLoggedIn = {{ 'true' if logged_in else 'false' }}; </script>
+
+<div id="loginOverlay" style="display: none;">
+    <div class="login-box card">
+        <h2 style="color: white; margin-top: 0;">QEC Platform</h2>
+        <input type="text" id="username" placeholder="Username" style="margin-bottom: 15px;">
+        <input type="password" id="password" placeholder="Password" style="margin-bottom: 20px;">
+        <button onclick="attemptLogin()" style="width: 100%;">Secure Login</button>
+        <div id="loginError">Invalid username or password</div>
+    </div>
+</div>
+
+<button class="logout-btn" onclick="attemptLogout()" style="display: none;" id="logoutBtn">Logout</button>
+
+<label class="switch">
+    <input type="checkbox" onchange="toggleTheme()">
+    <span class="slider"></span>
+</label>
+
+<h1>Adaptive Quantum Error Correction Using Reinforcement Learning </h1>
+
+<div class="container">
+
+    <div class="card controls-panel">
+        <h3>Simulation Controls</h3>
+
+        <label>Noise Type</label>
+        <select id="noiseType">
+            <option value="bitflip">Bit Flip</option>
+            <option value="depolarizing">Depolarizing</option>
+            <option value="biased">Biased (Phase-Heavy)</option>
+        </select>
+
+        <label>Noise Probability (p)</label>
+        <input id="pValue" value="0.05">
+
+        <label>Simulations (Quantum Runs)</label>
+        <input id="shots" value="500">
+
+        <label>Training Episodes (RL)</label>
+        <input id="episodes" value="1000">
+
+        <label>Testing Trials</label>
+        <input id="trials" value="500">
+
+        <div class="btn-group">
+            <button onclick="runProject()">Run Training</button>
+            <button onclick="downloadCSV()" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);">Data CSV</button>
+        </div>
+
+        <div class="progress"><div id="progressBar" class="progress-bar"></div></div>
+
+        <hr style="border-top: 1px solid rgba(255,255,255,0.1); border-bottom: none; margin: 30px 0;">
+
+        <h3>Qubit Simulation</h3>
+        <div id="qubitGrid"></div>
+        <div id="errorCount">Errors: 0</div>
+    </div>
+
+    <div class="main-content">
+        
+        <div class="card">
+            <h3>Final Results</h3>
+            <div style="display:flex; gap:15px;">
+                <div class="kpi"><div>Base Error Rate</div><div id="kpiBefore" style="color: #ef4444;">--</div></div>
+                <div class="kpi"><div>RL Error Rate</div><div id="kpiAfter" style="color: #22c55e;">--</div></div>
+                <div class="kpi"><div>Avg Reward</div><div id="kpiReward">--</div></div>
+                <div class="kpi"><div>Status</div><div id="kpiStatus" style="color: #a5b4fc;">Idle</div></div>
+            </div>
+        </div>
+
+        <div class="card" style="padding: 0; overflow: hidden;">
+            <h3 style="padding: 25px 25px 0 25px;">Experiment History</h3>
+            <div style="overflow-x: auto;">
+                <table style="width:100%; text-align:left; border-collapse: collapse; font-size: 14px; margin-top: 15px;">
+                    <thead>
+                        <tr style="background: rgba(0,0,0,0.2); border-bottom: 1px solid rgba(255,255,255,0.1);">
+                            <th style="padding: 14px 25px;">Date</th>
+                            <th style="padding: 14px;">Noise</th>
+                            <th style="padding: 14px;">p-value</th>
+                            <th style="padding: 14px;">Episodes</th>
+                            <th style="padding: 14px;">Error (RL)</th>
+                            <th style="padding: 14px 25px;">Reward</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyBody">
+                        </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Visualizations</h3>
+            <div id="chartSection" style="display:none;">
+                <img id="heatmapChart" class="chart">
+                <img id="rewardChart" class="chart">
+                <img id="survivalChart" class="chart">
+                <img id="errorChart" class="chart">
+            </div>
+            <div id="chartLoading" style="display: none;">
+                <div class="skeleton"></div>
+                <div class="skeleton"></div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script>
+const socket = io();
+
+// --- AUTHENTICATION ---
+document.addEventListener("DOMContentLoaded", () => {
+    createQubits(16);
+    if (!isLoggedIn) {
+        document.getElementById("loginOverlay").style.display = "flex";
+    } else {
+        document.getElementById("logoutBtn").style.display = "block";
+        loadHistory(); 
+    }
+});
+
+async function attemptLogin() {
+    const user = document.getElementById("username").value;
+    const pass = document.getElementById("password").value;
+    const res = await fetch("/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: user, password: pass })
+    });
+    if (res.ok) window.location.reload(); 
+    else document.getElementById("loginError").style.display = "block";
+}
+
+async function attemptLogout() {
+    await fetch("/logout", { method: "POST" });
+    window.location.reload();
+}
+
+function toggleTheme() { document.body.classList.toggle("light"); }
+
+// --- DATA LOGIC ---
+function downloadCSV() {
+    const noise = document.getElementById("noiseType").value;
+    const link = document.createElement("a");
+    link.href = `/download-rl?noise_type=${noise}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+async function loadHistory() {
+    if (!isLoggedIn) return; 
+    const res = await fetch("/get-history");
+    if (!res.ok) return;
+    
+    const data = await res.json();
+    const tbody = document.getElementById("historyBody");
+    tbody.innerHTML = ""; 
+    
+    data.forEach(row => {
+        const tr = document.createElement("tr");
+        tr.style.borderBottom = "1px solid rgba(255,255,255,0.05)";
+        const dateObj = new Date(row.timestamp + " Z"); 
+        const dateStr = dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+
+        tr.innerHTML = `
+            <td style="padding: 14px 25px; color: #a5b4fc;">${dateStr}</td>
+            <td style="padding: 14px; text-transform: capitalize;">${row.noise_type}</td>
+            <td style="padding: 14px;">${row.p_value}</td>
+            <td style="padding: 14px;">${row.episodes}</td>
+            <td style="padding: 14px; color: #22c55e; font-weight: 600;">${row.after_rate.toFixed(4)}</td>
+            <td style="padding: 14px 25px; font-weight: bold;">${row.avg_reward.toFixed(3)}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+// --- VISUAL QUBIT ANIMATION ---
+function createQubits(n=16){
+    const grid = document.getElementById("qubitGrid");
+    grid.innerHTML = "";
+    for(let i=0; i<n; i++){
+        let box = document.createElement("div");
+        box.className = "qubit-box";
+        let q = document.createElement("div");
+        q.className = "qubit";
+        let label = document.createElement("div");
+        label.innerText = "Q"+i;
+        box.appendChild(q); box.appendChild(label); grid.appendChild(box);
+    }
+}
+
+function updateErrorCount(){
+    const count = document.querySelectorAll(".qubit.error").length;
+    document.getElementById("errorCount").innerText = "Errors: " + count;
+}
+
+function injectErrors(p){
+    const qubits = document.querySelectorAll(".qubit");
+    qubits.forEach((q,i) => {
+        setTimeout(()=>{
+            if(Math.random() < p){ q.classList.add("error"); updateErrorCount(); }
+        }, i*100);
+    });
+}
+
+function fixErrors(){
+    const qubits = document.querySelectorAll(".qubit");
+    qubits.forEach((q,i) => {
+        setTimeout(()=>{
+            if(q.classList.contains("error")){
+                q.classList.remove("error"); q.classList.add("fixed");
+                setTimeout(()=>q.classList.remove("fixed"), 400);
+                updateErrorCount();
+            }
+        }, i*100);
+    });
+}
+
+// --- WEBSOCKET ENGINE ---
+function runProject(){
+    let displayP = parseFloat(pValue.value);
+    if (displayP < 0.20) displayP = 0.20; 
+    setTimeout(()=>injectErrors(displayP), 300);
+
+    document.getElementById("chartSection").style.display="none";
+    document.getElementById("chartLoading").style.display="block";
+    
+    heatmapChart.classList.remove("animate"); rewardChart.classList.remove("animate");
+    survivalChart.classList.remove("animate"); errorChart.classList.remove("animate");
+
+    const bar = document.getElementById("progressBar");
+    bar.style.width = "0%";
+    kpiStatus.innerText="Training...";
+    kpiStatus.style.color = "#22d3ee";
+
+    socket.emit('start_run', {
+        noise_type: noiseType.value,
+        p: parseFloat(pValue.value),
+        shots: parseInt(shots.value),
+        episodes: parseInt(episodes.value),
+        trials: parseInt(trials.value)
+    });
+}
+
+socket.on('progress', function(data) {
+    const bar = document.getElementById("progressBar");
+    let visualProgress = data.progress;
+    if (visualProgress === 100) visualProgress = 95; 
+    bar.style.width = visualProgress + "%";
+});
+
+socket.on('result', function(data) {
+    const r = data.result;
+    
+    document.getElementById("progressBar").style.width = "100%";
+
+    kpiBefore.innerText = r.before_rate.toFixed(4);
+    kpiAfter.innerText = r.after_rate.toFixed(4);
+    kpiReward.innerText = r.avg_reward.toFixed(3);
+    kpiStatus.innerText = "Completed";
+    kpiStatus.style.color = "#a5b4fc";
+
+    fixErrors();
+
+    setTimeout(()=>{
+        heatmapChart.src = r.charts.heatmap;
+        rewardChart.src = r.charts.reward;
+        survivalChart.src = r.charts.survival;
+        errorChart.src = r.charts.error_vs_p;
+
+        document.getElementById("chartSection").style.display="block";
+        document.getElementById("chartLoading").style.display="none";
+
+        setTimeout(() => {
+            heatmapChart.classList.add("animate"); rewardChart.classList.add("animate");
+            survivalChart.classList.add("animate"); errorChart.classList.add("animate");
+        }, 50);
+        
+        loadHistory(); 
+    }, 500);
+});
+</script>
+</body>
+</html>
